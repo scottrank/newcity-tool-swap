@@ -39,7 +39,7 @@ jobs:
       - name: Collect site files
         run: |
           mkdir -p dist
-          cp index.html style.css app.js _worker.js newcity-logo.png dist/
+          cp index.html style.css app.js _worker.js dist/
 
       - name: Create the Pages project if it doesn't exist yet
         uses: cloudflare/wrangler-action@v3
