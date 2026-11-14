@@ -162,6 +162,17 @@ async function handleApi(request, env, url) {
       await db.prepare("UPDATE tools SET removed_at = datetime('now') WHERE id = ?").bind(id).run();
       return json({ ok: true });
     }
+    if (c === 'request' && method === 'POST') {
+      if (mine) fail(400, "That's your own tool");
+      const x = await body(request);
+      if (await db.prepare("SELECT id FROM borrow_requests WHERE tool_id = ? AND requester_id = ? AND status IN ('open', 'yes')").bind(id, me.id).first()) fail(409, 'You already asked for this one');
+      const neededOn = x.needed_on || null, untilOn = x.until_on || null;
+      if (neededOn !== null && (!validDate(neededOn) || neededOn < t)) fail(400, "Pick a date that isn't in the past");
+      if (untilOn !== null && (!validDate(untilOn) || untilOn < (neededOn || t))) fail(400, 'Return date must be on or after the day you need it');
+      const r = await db.prepare('INSERT INTO borrow_requests (tool_id, requester_id, needed_on, until_on, note) VALUES (?, ?, ?, ?, ?)')
+        .bind(id, me.id, neededOn, untilOn, str(x.note, 300, 'Note')).run();
+      return json({ ok: true, id: r.meta.last_row_id });
+    }
     if ((c === 'lend' || c === 'handoff') && method === 'POST') {
       if (!mine) fail(403, 'Only the owner can lend this tool');
       const x = await body(request);
@@ -186,8 +197,9 @@ async function handleApi(request, env, url) {
       const note = str(x.note, 300, 'Note');
       const insert = db.prepare('INSERT INTO loans (tool_id, lender_id, borrower_id, borrower_name, lent_on, due_on, note) VALUES (?, ?, ?, ?, ?, ?, ?)')
         .bind(id, me.id, borrowerId, borrowerName, lentOn, due, note);
-      if (cur) await db.batch([db.prepare('UPDATE loans SET returned_on = ? WHERE id = ? AND returned_on IS NULL').bind(lentOn, cur.id), insert]);
-      else await insert.run();
+      const settle = db.prepare("UPDATE borrow_requests SET status = 'lent', answered_at = COALESCE(answered_at, datetime('now')) WHERE tool_id = ? AND requester_id = ? AND status IN ('open', 'yes')").bind(id, borrowerId || 0);
+      if (cur) await db.batch([db.prepare('UPDATE loans SET returned_on = ? WHERE id = ? AND returned_on IS NULL').bind(lentOn, cur.id), insert, settle]);
+      else await db.batch([insert, settle]);
       return json({ ok: true });
     }
     fail(404, 'Not found');
@@ -211,6 +223,18 @@ async function handleApi(request, env, url) {
       return json({ ok: true });
     }
     fail(404, 'Not found');
+  }
+
+  if (a === 'requests' && /^\d+$/.test(b || '') && method === 'POST') {
+    const br = await db.prepare('SELECT r.*, t.owner_id FROM borrow_requests r JOIN tools t ON t.id = r.tool_id WHERE r.id = ?').bind(+b).first();
+    if (!br || (br.owner_id !== me.id && br.requester_id !== me.id)) fail(404, 'No such request');
+    const next = { yes: 'yes', no: 'no', cancel: 'cancelled' }[c];
+    if (!next) fail(404, 'Not found');
+    if (next === 'cancelled' ? br.requester_id !== me.id : br.owner_id !== me.id) fail(403, next === 'cancelled' ? 'Only the person who asked can cancel' : 'Only the owner can answer this');
+    const allowedFrom = next === 'yes' ? ['open'] : next === 'no' ? ['open', 'yes'] : ['open', 'yes'];
+    if (!allowedFrom.includes(br.status)) fail(409, 'That request was already answered');
+    await db.prepare("UPDATE borrow_requests SET status = ?, answered_at = datetime('now') WHERE id = ?").bind(next, br.id).run();
+    return json({ ok: true });
   }
 
   if (a === 'help') {
@@ -257,12 +281,19 @@ async function handleApi(request, env, url) {
 
 async function state(db, me, t) {
   // Open help requests: those with a date stay up through that day; undated ones for 30 days.
-  const [usersR, toolsR, loansR, helpR, offersR] = await db.batch([
+  const [usersR, toolsR, loansR, helpR, offersR, reqR] = await db.batch([
     db.prepare(`SELECT ${USER_COLS} FROM users ORDER BY name COLLATE NOCASE`),
     db.prepare("SELECT id, owner_id, name, notes, private, removed_at, photo IS NOT NULL AS has_photo, CASE WHEN photo IS NULL THEN '' ELSE length(photo) || '-' || substr(photo, -10) END AS photo_v FROM tools ORDER BY name COLLATE NOCASE"),
     db.prepare('SELECT * FROM loans WHERE removed_at IS NULL ORDER BY lent_on DESC, id DESC'),
     db.prepare("SELECT id, user_id, title, details, needed_on, created_at FROM help_requests WHERE closed_at IS NULL AND (needed_on >= ? OR (needed_on IS NULL AND created_at >= datetime('now', '-30 days'))) ORDER BY id DESC").bind(t),
-    db.prepare('SELECT o.request_id, o.user_id FROM help_offers o JOIN help_requests r ON r.id = o.request_id WHERE r.closed_at IS NULL ORDER BY o.created_at')
+    db.prepare('SELECT o.request_id, o.user_id FROM help_offers o JOIN help_requests r ON r.id = o.request_id WHERE r.closed_at IS NULL ORDER BY o.created_at'),
+    // Borrow requests I sent or got: open/yes ones until a few days past the date needed (undated: 21 days), and "no" answers for a week.
+    db.prepare(`SELECT r.id, r.tool_id, r.requester_id, t.owner_id, t.name AS tool_name, r.needed_on, r.until_on, r.note, r.status, r.created_at, r.answered_at
+      FROM borrow_requests r JOIN tools t ON t.id = r.tool_id
+      WHERE (r.requester_id = ?1 OR t.owner_id = ?1) AND t.removed_at IS NULL AND (
+        (r.status IN ('open', 'yes') AND (r.needed_on >= date(?2, '-3 days') OR (r.needed_on IS NULL AND r.created_at >= datetime('now', '-21 days'))))
+        OR (r.status = 'no' AND r.answered_at >= datetime('now', '-7 days')))
+      ORDER BY r.id DESC`).bind(me.id, t)
   ]);
   const users = usersR.results.map(u => ({ ...u, removed: !!u.removed })), allTools = toolsR.results, allLoans = loansR.results;
   const removedIds = new Set(users.filter(u => u.removed).map(u => u.id));
@@ -285,5 +316,7 @@ async function state(db, me, t) {
   for (const o of offersR.results) { if (removedIds.has(o.user_id)) continue; if (!helpers.has(o.request_id)) helpers.set(o.request_id, []); helpers.get(o.request_id).push(o.user_id); }
   const help = helpR.results.filter(h => !removedIds.has(h.user_id)).map(h => ({ ...h, helpers: helpers.get(h.id) || [] }));
 
-  return { me: { id: me.id }, today: t, users, tools, loans, help };
+  const requests = reqR.results.filter(r => !removedIds.has(r.requester_id) && !removedIds.has(r.owner_id));
+
+  return { me: { id: me.id }, today: t, users, tools, loans, help, requests };
 }

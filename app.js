@@ -43,6 +43,7 @@ $('#app').innerHTML = `<p class="center muted">${e.status === 401 ? 'You are not
 
 function render() {
 document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
+renderRequests();
 renderHelp();
 ({ tools: renderTools, shelf: renderShelf })[tab]();
 Tour.refresh();
@@ -62,7 +63,8 @@ $('#app').innerHTML = `
 <label class="chk"><input type="checkbox" id="avail" ${availOnly ? 'checked' : ''}> Available now</label></div>
 <div class="card">${rows.map(t => {
 const loan = openLoanFor(t.id);
-return `<div class="row click" data-tool="${t.id}"><div class="grow"><div class="title">${esc(t.name)}${t.private ? ' <span class="pill">Private</span>' : ''}</div>
+const myReq = myRequestFor(t.id);
+return `<div class="row click" data-tool="${t.id}"><div class="grow"><div class="title">${esc(t.name)}${t.private ? ' <span class="pill">Private</span>' : ''}${myReq ? ` <span class="pill ask">${myReq.status === 'yes' ? 'Said yes to you' : 'You asked'}</span>` : ''}</div>
 <div class="muted small">${who(t.owner_id)}</div></div>
 ${loan ? `<div class="small">${who(loan.borrower_id, loan.borrower_name)} ${dueTag(loan)}</div>` : '<span class="pill ok">Available</span>'}</div>`;
 }).join('') || '<div class="empty">No tools match.</div>'}</div>`;
@@ -93,7 +95,9 @@ ${t.has_photo ? `<img src="/api/tools/${t.id}/photo?v=${encodeURIComponent(t.pho
 ${t.notes ? `<p>${esc(t.notes)}</p>` : '<p class="muted">No notes.</p>'}
 <div class="field"><span>Owner</span><div>${who(t.owner_id)}<div class="small muted">${esc(o.street)}</div><div>${contactHtml(o, t)}</div></div></div>
 <div class="field"><span>Status</span><div>${loan ? `With ${who(loan.borrower_id, loan.borrower_name)} since ${fmt(loan.lent_on)}<br>${loan.due_on ? 'Due ' + fmt(loan.due_on) : 'No due date'}${loan.note ? `<div class="small muted">“${esc(loan.note)}”</div>` : ''}` : '<span class="pill ok">Available</span>'}</div></div>
-<div class="actions"><button value="x">Close</button></div>`);
+${(() => { const r = myRequestFor(id); return r ? `<div class="field"><span>Your request</span><div>${reqStatusText(r)}</div></div>` : ''; })()}
+<div class="actions">${t.owner_id !== S.me.id && !myRequestFor(id) && !(loan && loan.borrower_id === S.me.id) ? `<button value="x">Close</button><button type="button" class="primary" id="askBorrow">Ask to borrow</button>` : '<button value="x">Close</button>'}</div>`);
+const ab = $('#askBorrow'); if (ab) ab.onclick = () => borrowDlg(id);
 }
 
 function renderShelf() {
@@ -106,13 +110,16 @@ $('#app').innerHTML = `
 <div class="actions" style="margin-top:8px"><button class="sm" id="takeTour">Take the tour</button><button class="sm" id="editProfile">Edit my profile</button></div>
 <h2>My tools <button class="sm primary" id="addTool" style="float:right">+ Add tool</button></h2>
 <div class="card">${mine.map(t => { const l = openLoanFor(t.id); return `<div class="row"><div class="grow"><div class="title">${esc(t.name)} ${t.private ? '<span class="pill">Private</span>' : ''}</div><div class="small muted">${esc(t.notes)}</div></div>
-${l ? `<span class="small">Out with ${who(l.borrower_id, l.borrower_name)}</span>` : '<span class="pill ok">Home</span>'}
+${l ? `<span class="small">Out with ${who(l.borrower_id, l.borrower_name)}</span>` : (() => { const pr = (S.requests || []).find(r => r.tool_id === t.id && r.status === 'yes'); return pr ? `<span class="pill ask">Promised to ${esc(firstName(userById(pr.requester_id)?.name))} · ${reqWhen(pr)}</span>` : '<span class="pill ok">Home</span>'; })()}
 <div class="actions">${l ? '' : `<button class="sm primary" data-lend="${t.id}">Lend</button>`}<button class="sm" data-edit="${t.id}">Edit</button>${l ? '' : `<button class="sm danger" data-rm="${t.id}">Remove</button>`}</div></div>`; }).join('') || '<div class="empty">You haven\'t added any tools yet.</div>'}</div>
 <h2>Lent out</h2>
 <div class="card">${lent.map(l => `<div class="row"><div class="grow"><div class="title">${esc(l.tool_name)}</div><div class="small">${who(l.borrower_id, l.borrower_name)} · since ${fmt(l.lent_on)} · ${l.days}d ${dueTag(l)}</div>${l.note ? `<div class="small muted">“${esc(l.note)}”</div>` : ''}</div>
 <div class="actions"><button class="sm primary" data-ret="${l.id}">Got it back</button><button class="sm" data-hand="${l.tool_id}">Hand off</button><button class="sm" data-due="${l.id}">Due date</button></div></div>`).join('') || '<div class="empty">Nothing lent out.</div>'}</div>
 <h2>Borrowed</h2>
 <div class="card">${borrowed.map(l => `<div class="row"><div class="grow"><div class="title">${esc(l.tool_name)}</div><div class="small">from ${who(l.lender_id)} · since ${fmt(l.lent_on)} · ${l.days}d ${dueTag(l)}</div></div><div class="actions"><button class="sm primary" data-ret="${l.id}">I returned it</button></div></div>`).join('') || '<div class="empty">You\'re not holding anything. Nice.</div>'}</div>
+<h2>Tools I've asked for</h2>
+<div class="card">${(S.requests || []).filter(r => r.requester_id === me).map(r => `<div class="row"><div class="grow"><div class="title">${esc(r.tool_name)}</div><div class="small">from ${who(r.owner_id)} · ${reqWhen(r)}</div><div class="small">${reqStatusText(r)}</div></div>
+${r.status === 'open' || r.status === 'yes' ? `<div class="actions"><button class="sm" data-rcancel="${r.id}">Cancel request</button></div>` : ''}</div>`).join('') || '<div class="empty">No requests out. Open any tool and tap <b>Ask to borrow</b>.</div>'}</div>
 <h2>History</h2>
 <div class="card">${hist.map(l => `<div class="row small"><div class="grow"><b>${esc(l.tool_name)}</b> · ${l.lender_id === me ? 'lent to ' + who(l.borrower_id, l.borrower_name) : 'borrowed from ' + who(l.lender_id)}</div><span class="muted">${fmt(l.lent_on)} – ${fmt(l.returned_on)} · ${l.days}d</span></div>`).join('') || '<div class="empty">No returned loans yet.</div>'}</div>`;
 $('#addTool').onclick = () => editTool(null);
@@ -122,6 +129,7 @@ document.querySelectorAll('[data-lend]').forEach(b => b.onclick = () => lendDlg(
 document.querySelectorAll('[data-hand]').forEach(b => b.onclick = () => lendDlg(+b.dataset.hand, true));
 document.querySelectorAll('[data-ret]').forEach(b => b.onclick = () => act(() => api(`loans/${b.dataset.ret}/return`, { method: 'POST', body: {} }), 'Marked returned'));
 document.querySelectorAll('[data-due]').forEach(b => b.onclick = () => dueDlg(S.loans.find(l => l.id === +b.dataset.due)));
+document.querySelectorAll('[data-rcancel]').forEach(b => b.onclick = () => { if (confirm('Cancel this request?')) act(() => api(`requests/${b.dataset.rcancel}/cancel`, { method: 'POST', body: {} }), 'Request cancelled'); });
 }
 
 function quickPicks(base) { return `<div class="quick">${[['Tomorrow', 1], ['3 days', 3], ['1 week', 7], ['2 weeks', 14]].map(([n, d]) => `<button type="button" class="sm" data-q="${d}">${n}</button>`).join('')}<button type="button" class="sm" data-q="0">None</button></div>`; }
@@ -149,15 +157,16 @@ const del = $('#delTool');
 if (del) del.onclick = () => { if (confirm(`Delete "${t.name}"? It comes off the list, but its loan history is kept.`)) { $('#dlg').close('x'); act(() => api('tools/' + id, { method: 'DELETE' }), 'Deleted'); } };
 }
 
-function lendDlg(toolId, handoff) {
+function lendDlg(toolId, handoff, preReq) {
 const t = S.tools.find(x => x.id === toolId), cur = openLoanFor(toolId);
+const pre = preReq || (S.requests || []).find(r => r.tool_id === toolId && r.status === 'yes') || (S.requests || []).find(r => r.tool_id === toolId && r.status === 'open');
 const others = S.users.filter(u => !u.removed && u.id !== S.me.id && (!cur || u.id !== cur.borrower_id));
 openDlg(`<h3>${handoff ? 'Hand off' : 'Lend'} ${esc(t.name)}</h3>
 ${handoff ? `<p class="small muted">Closes the loan to ${esc(cur.borrower_id ? userById(cur.borrower_id).name : cur.borrower_name)} and opens a new one on the same date.</p>` : ''}
-<div class="field"><span>To a neighbor</span><div class="card" style="max-height:200px;overflow:auto">${others.map(u => `<label class="row chk"><input type="radio" name="bw" value="${u.id}"> ${avatar(u)} ${esc(u.name)} <span class="muted small">${esc(u.street)}</span></label>`).join('') || '<div class="empty">No other neighbors yet.</div>'}</div></div>
+<div class="field"><span>To a neighbor</span><div class="card" style="max-height:200px;overflow:auto">${others.map(u => `<label class="row chk"><input type="radio" name="bw" value="${u.id}" ${pre && pre.requester_id === u.id ? 'checked' : ''}> ${avatar(u)} ${esc(u.name)} <span class="muted small">${esc(u.street)}</span></label>`).join('') || '<div class="empty">No other neighbors yet.</div>'}</div></div>
 <label class="field"><span>…or someone not on the app</span><input id="bname" maxlength="60" placeholder="Their name"></label>
 <label class="field"><span>${handoff ? 'Hand-off date' : 'Date lent'}</span><input type="date" id="lon" value="${S.today}" max="${S.today}"></label>
-<div class="field"><span>Due date (optional)</span><input type="date" id="due">${quickPicks()}</div>
+<div class="field"><span>Due date (optional)</span><input type="date" id="due" value="${pre && pre.until_on ? pre.until_on : ''}">${quickPicks()}</div>
 <label class="field"><span>Note (optional)</span><input id="lnote" maxlength="300"></label>
 <div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">${handoff ? 'Hand off' : 'Lend'}</button></div>`,
 () => { const sel = $('#dlg input[name=bw]:checked'); return act(() => api(`tools/${toolId}/${handoff ? 'handoff' : 'lend'}`, { method: 'POST', body: { borrower_id: sel && !$('#bname').value.trim() ? +sel.value : null, borrower_name: $('#bname').value, lent_on: $('#lon').value, due_on: $('#due').value || null, note: $('#lnote').value } }), handoff ? 'Handed off' : 'Lent'); });
@@ -249,6 +258,7 @@ if (confirm(`Mark "${h.title}" as done? It comes off the list for everyone.`)) a
 }
 
 function nextSaturday() { const d = new Date(S.today + 'T12:00:00Z'); const add = (6 - d.getUTCDay() + 7) % 7; return addDays(S.today, add); }
+function satPick() { const d = nextSaturday(); return d === S.today ? [addDays(d, 7), 'Next Saturday'] : [d, 'This Saturday']; }
 
 function askHelpDlg(edit) {
 if (!S) return;
@@ -258,12 +268,86 @@ ${e ? '<p class="small muted">Changes show up for everyone right away. Anyone wh
 <label class="field"><span>What do you need help with?</span><input id="hTitle" required maxlength="100" placeholder="Haul a load of gravel to my backyard" value="${esc(e ? e.title : '')}"></label>
 <label class="field"><span>Details (optional)</span><textarea id="hDetails" rows="3" maxlength="600" placeholder="Start time, how long it should take, how many guys, whether to bring a truck or tools…">${esc(e ? e.details : '')}</textarea></label>
 <div class="field"><span>When (optional)</span><input type="date" id="hDate" min="${S.today}" value="${esc(e && e.needed_on || '')}">
-<div class="quick"><button type="button" class="sm" data-hd="${S.today}">Today</button><button type="button" class="sm" data-hd="${addDays(S.today, 1)}">Tomorrow</button><button type="button" class="sm" data-hd="${nextSaturday()}">This Saturday</button><button type="button" class="sm" data-hd="">Any day</button></div></div>
+<div class="quick"><button type="button" class="sm" data-hd="${S.today}">Today</button><button type="button" class="sm" data-hd="${addDays(S.today, 1)}">Tomorrow</button><button type="button" class="sm" data-hd="${satPick()[0]}">${satPick()[1]}</button><button type="button" class="sm" data-hd="">Any day</button></div></div>
 <div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">${e ? 'Save changes' : 'Post request'}</button></div>`,
 () => act(() => api(e ? 'help/' + e.id : 'help', { method: e ? 'PATCH' : 'POST', body: { title: $('#hTitle').value, details: $('#hDetails').value, needed_on: $('#hDate').value || null } }), e ? 'Request updated' : 'Request posted. The guys will see it up top.'));
 document.querySelectorAll('#dlg [data-hd]').forEach(b => b.onclick = () => { $('#hDate').value = b.dataset.hd; });
 }
 $('#askHelp').onclick = () => askHelpDlg();
+
+// ---------- borrow requests ----------
+const myRequestFor = (toolId) => (S.requests || []).find(r => r.tool_id === toolId && r.requester_id === S.me.id && (r.status === 'open' || r.status === 'yes'));
+const dayText = (d) => d === S.today ? 'today' : d === addDays(S.today, 1) ? 'tomorrow' : new Date(d + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+function reqWhen(r) {
+if (!r.needed_on && !r.until_on) return 'any day';
+if (!r.needed_on) return `back by ${dayText(r.until_on)}`;
+return r.until_on && r.until_on !== r.needed_on ? `${dayText(r.needed_on)} to ${dayText(r.until_on)}` : dayText(r.needed_on);
+}
+function reqStatusText(r) {
+const owner = esc(firstName(userById(r.owner_id)?.name));
+return { open: `<span class="muted">Waiting for ${owner} to answer</span>`, yes: `<b style="color:var(--ok)">${owner} said yes.</b> Work out pickup with him.`,
+  no: `<span class="muted">${owner} can't lend it this time.</span>`, lent: 'Lent to you', cancelled: 'Cancelled' }[r.status] || '';
+}
+
+function renderRequests() {
+const me = S.me.id, all = S.requests || [];
+const forMe = all.filter(r => r.owner_id === me && r.status === 'open');
+const yesToMe = all.filter(r => r.requester_id === me && r.status === 'yes');
+const items = [...forMe, ...yesToMe];
+$('#reqFeed').innerHTML = items.length ? `<div class="helplabel muted">Borrow requests</div><div class="helpfeed">${items.map(r => {
+  if (r.owner_id === me) {
+    const u = userById(r.requester_id), ph = phoneOf(u && u.contact);
+    return `<div class="helpcard req"><div class="helphead">${avatar(u, true)}<div class="grow">
+<div class="small muted">${esc(firstName(u && u.name))} wants to borrow your</div><div class="title">${esc(r.tool_name)}${isNewHelp(r) ? '<span class="pill new">New</span>' : ''}</div>
+<div class="small muted">${reqWhen(r)}</div>${r.note ? `<div class="small reqnote">“${esc(r.note)}”</div>` : ''}</div></div>
+<div class="actions"><button class="sm primary" data-ryes="${r.id}">Yes</button><button class="sm" data-rno="${r.id}">Can't this time</button>${ph ? `<a class="btn sm" style="text-decoration:none;font-size:13px;padding:5px 9px" href="${smsHref(ph.d, `Hi ${firstName(u.name)}, about borrowing my ${r.tool_name}: `)}">Text ${esc(firstName(u.name))}</a>` : ''}</div></div>`;
+  }
+  const o = userById(r.owner_id), ph = phoneOf(o && o.contact), me2 = userById(me);
+  return `<div class="helpcard req yes"><div class="helphead">${avatar(o, true)}<div class="grow">
+<div class="small muted">${esc(firstName(o && o.name))} said yes to lending you</div><div class="title">${esc(r.tool_name)}</div><div class="small muted">${reqWhen(r)} · work out pickup with him</div></div></div>
+<div class="actions">${ph ? `<a class="btn sm" style="text-decoration:none;font-size:13px;padding:5px 9px" href="${smsHref(ph.d, `Hi ${firstName(o.name)}, this is ${firstName(me2 && me2.name)}. Thanks for saying yes on the ${r.tool_name}! When's a good time to pick it up?`)}">Text ${esc(firstName(o.name))}</a>` : ''}<button class="sm" data-rcancel="${r.id}">Don't need it</button></div></div>`;
+}).join('')}</div>` : '';
+document.querySelectorAll('#reqFeed [data-ryes]').forEach(b => b.onclick = () => answerReq(+b.dataset.ryes, true));
+document.querySelectorAll('#reqFeed [data-rno]').forEach(b => b.onclick = () => answerReq(+b.dataset.rno, false));
+document.querySelectorAll('#reqFeed [data-rcancel]').forEach(b => b.onclick = () => act(() => api(`requests/${b.dataset.rcancel}/cancel`, { method: 'POST', body: {} }), 'Request cancelled'));
+}
+
+async function answerReq(id, yes) {
+const r = (S.requests || []).find(x => x.id === id); if (!r) return;
+try { await api(`requests/${id}/${yes ? 'yes' : 'no'}`, { method: 'POST', body: {} }); } catch (e) { toast(e.message); return load(); }
+await load();
+const u = userById(r.requester_id), name = firstName(u && u.name), me = userById(S.me.id);
+const link = textLink(u, yes ? `Hi ${name}, this is ${firstName(me && me.name)}. Yes, you can borrow my ${r.tool_name}. When do you want to grab it?` : `Hi ${name}, sorry, I can't lend out my ${r.tool_name} this time.`, `Text ${name}`);
+const loanNow = yes && !openLoanFor(r.tool_id);
+openDlg(`<h3>${yes ? `You said yes` : 'Got it'}</h3>
+<p>${yes ? `${esc(name)} will see your yes at the top of his screen. When you hand over the <b>${esc(r.tool_name)}</b>, tap <b>Lend</b> on My shelf (he'll already be picked).` : `${esc(name)} will see that you can't lend the <b>${esc(r.tool_name)}</b> this time.`}</p>
+${link ? `<p class="small muted">Want to send him a quick text too?</p>${link}` : ''}
+<div class="actions">${loanNow ? `<button type="button" id="lendNow">He's got it now: lend it</button>` : ''}<button value="x">Done</button></div>`);
+const ln = $('#lendNow'); if (ln) ln.onclick = () => { $('#dlg').close('x'); lendDlg(r.tool_id, false, r); };
+}
+
+function borrowDlg(toolId) {
+const t = S.tools.find(x => x.id === toolId), o = userById(t.owner_id), name = firstName(o && o.name), loan = openLoanFor(toolId);
+openDlg(`<h3>Ask to borrow: ${esc(t.name)}</h3>
+<p class="small">${esc(name)} will see your request at the top of his screen and can tap yes or no. You'll see his answer here too.${loan ? ` <b>Heads up:</b> it's out with ${esc(loan.borrower_id ? firstName(userById(loan.borrower_id)?.name) : loan.borrower_name)} right now${loan.due_on ? `, due back ${fmt(loan.due_on)}` : ''}.` : ''}</p>
+<div class="field"><span>When do you need it? (optional)</span><input type="date" id="bNeed" min="${S.today}">
+<div class="quick"><button type="button" class="sm" data-bn="${S.today}">Today</button><button type="button" class="sm" data-bn="${addDays(S.today, 1)}">Tomorrow</button><button type="button" class="sm" data-bn="${satPick()[0]}">${satPick()[1]}</button><button type="button" class="sm" data-bn="">Any day</button></div></div>
+<div class="field"><span>Bring it back by (optional)</span><input type="date" id="bUntil" min="${S.today}">
+<div class="quick"><button type="button" class="sm" data-bu="0">Same day</button><button type="button" class="sm" data-bu="1">Next day</button><button type="button" class="sm" data-bu="3">3 days</button><button type="button" class="sm" data-bu="7">1 week</button></div></div>
+<label class="field"><span>Note (optional)</span><input id="bNote" maxlength="300" placeholder="What's the project?"></label>
+<div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">Send request</button></div>`,
+async () => {
+  try { await api(`tools/${toolId}/request`, { method: 'POST', body: { needed_on: $('#bNeed').value || null, until_on: $('#bUntil').value || null, note: $('#bNote').value } }); }
+  catch (e) { toast(e.message); return; }
+  await load();
+  const me = userById(S.me.id);
+  const link = textLink(o, `Hi ${name}, this is ${firstName(me && me.name)}. I just asked on New City Tool Swap to borrow your ${t.name}.`, `Text ${name}`);
+  openDlg(`<h3>Request sent</h3><p>${esc(name)} will see it at the top of his screen. You'll see his answer at the top of yours, and under <b>My shelf</b>.</p>
+${link ? `<p class="small muted">Want to give him a heads-up by text too?</p>${link}` : ''}<div class="actions"><button value="x">Done</button></div>`);
+});
+document.querySelectorAll('#dlg [data-bn]').forEach(b => b.onclick = () => { $('#bNeed').value = b.dataset.bn; });
+document.querySelectorAll('#dlg [data-bu]').forEach(b => b.onclick = () => { $('#bUntil').value = addDays($('#bNeed').value || S.today, +b.dataset.bu); });
+}
 
 function shrinkPhoto(file) {
 return new Promise((res, rej) => {
@@ -350,7 +434,7 @@ const Tour = (() => {
     { tab: 'tools', target: '.bar', title: 'Find what you need',
       body: "Search by tool or by neighbor. Tick <b>Available now</b> to hide tools that are already lent out." },
     { tab: 'tools', target: '#app .card .row.click', title: 'Ask to borrow',
-      body: "Open a tool and tap the owner's phone number. A text asking to borrow it is written for you." },
+      body: "Open a tool and tap <b>Ask to borrow</b>. The owner sees your request at the top of their screen and can say yes or no. You can also text them straight from there." },
     { tab: 'shelf', target: '#addTool', title: 'Add your tools',
       body: "On <b>My shelf</b>, tap <b>+ Add tool</b> to list something you're willing to lend. Add a photo and notes, or mark it private." },
     { tab: 'shelf', target: '[data-lend], #app h2:nth-of-type(2)', title: 'Lending and returns',

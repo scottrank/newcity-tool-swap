@@ -70,6 +70,11 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .helpmore{justify-self:center;background:none;border:0;color:var(--muted);text-decoration:underline}
 .textbtn{display:inline-block;background:var(--accent);color:var(--accent-fg);text-decoration:none;font-weight:700;padding:10px 16px;border-radius:8px}
 .helperlist{display:grid;gap:6px}
+.helpcard.req{border-left-color:#3d5a80}
+.helpcard.req.yes{border-left-color:var(--ok)}
+.reqnote{font-style:italic}
+.pill.ask{color:#3d5a80;font-weight:600}
+@media (prefers-color-scheme:dark){.helpcard.req{border-left-color:#7fa7d9}.pill.ask{color:#9cc0ec}}
 @media (max-width:640px){
 .helpzone{padding:10px 10px 0}
 .bigask-t{font-size:20px}

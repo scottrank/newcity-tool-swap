@@ -1,4 +1,4 @@
--- Database layout for newcitytoolswap-db (already applied, including the help-request tables).
+-- Database layout for newcitytoolswap-db (already applied, including the help-request and borrow-request tables; borrow_requests.status is open, yes, no, cancelled or lent).
 CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, street TEXT NOT NULL DEFAULT '', contact TEXT NOT NULL DEFAULT '', color TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')), avatar TEXT, removed_at TEXT);
 CREATE TABLE tools (id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', private INTEGER NOT NULL DEFAULT 0, removed_at TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), photo TEXT);
 CREATE TABLE loans (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_id INTEGER NOT NULL REFERENCES tools(id), lender_id INTEGER NOT NULL REFERENCES users(id), borrower_id INTEGER REFERENCES users(id), borrower_name TEXT NOT NULL DEFAULT '', lent_on TEXT NOT NULL, due_on TEXT, note TEXT NOT NULL DEFAULT '', returned_on TEXT, removed_at TEXT);
@@ -6,3 +6,5 @@ CREATE INDEX loans_tool ON loans(tool_id);
 CREATE UNIQUE INDEX loans_one_open ON loans(tool_id) WHERE returned_on IS NULL;
 CREATE TABLE IF NOT EXISTS help_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id), title TEXT NOT NULL, details TEXT NOT NULL DEFAULT '', needed_on TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), closed_at TEXT);
 CREATE TABLE IF NOT EXISTS help_offers (request_id INTEGER NOT NULL REFERENCES help_requests(id), user_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (request_id, user_id));
+CREATE TABLE IF NOT EXISTS borrow_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, tool_id INTEGER NOT NULL REFERENCES tools(id), requester_id INTEGER NOT NULL REFERENCES users(id), needed_on TEXT, until_on TEXT, note TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL DEFAULT (datetime('now')), answered_at TEXT);
+CREATE INDEX IF NOT EXISTS borrow_requests_tool ON borrow_requests(tool_id);
