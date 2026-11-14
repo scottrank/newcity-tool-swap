@@ -369,21 +369,31 @@ openDlg(`<h3>Ask to borrow: ${esc(t.name)}</h3>
 <div class="quick"><button type="button" class="sm" data-bu="0">Same day</button><button type="button" class="sm" data-bu="1">Next day</button><button type="button" class="sm" data-bu="3">3 days</button><button type="button" class="sm" data-bu="7">1 week</button></div></div>
 <label class="field"><span>Note (optional)</span><input id="bNote" maxlength="300" placeholder="What's the project?"></label>
 ${ownerPh ? `<label class="chk textme"><input type="checkbox" id="bText" checked> <span>Text ${esc(name)} too${canText ? ' <span class="small muted">(your texting app opens with the message written)</span>' : ''}</span></label>` : `<p class="small muted">${esc(name)} hasn't added a phone number, so he'll only see the request on the site.</p>`}
-<div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">Send request</button></div>`,
-async () => {
-  const need = $('#bNeed').value || null, until = $('#bUntil').value || null, note = $('#bNote').value.trim();
-  const wantText = ownerPh && $('#bText').checked, msg = borrowMsg(t, o, need, until, note);
-  const sending = api(`tools/${toolId}/request`, { method: 'POST', body: { needed_on: need, until_on: until, note } });
-  if (wantText && canText) location.href = smsHref(ownerPh.d, msg); // open the texting app right away, while the tap still counts
-  try { await sending; } catch (e) { toast(e.message); return; }
+<div class="actions"><button value="x" formnovalidate>Cancel</button><button type="button" class="primary" id="bSendBtn">Send request</button><a class="btn primary" id="bSendText" style="text-decoration:none" hidden>Send request &amp; text ${esc(name)}</a></div>`);
+const vals = () => ({ need: $('#bNeed').value || null, until: $('#bUntil').value || null, note: $('#bNote').value.trim() });
+// On phones, "Send request & text" is a real link to the texting app, so the phone opens it straight from the tap.
+const sync = () => {
+  const textNow = !!(ownerPh && canText && $('#bText') && $('#bText').checked), v = vals();
+  $('#bSendBtn').hidden = textNow; $('#bSendText').hidden = !textNow;
+  if (textNow) $('#bSendText').href = smsHref(ownerPh.d, borrowMsg(t, o, v.need, v.until, v.note));
+};
+['#bNeed', '#bUntil', '#bNote', '#bText'].forEach(sel => { const el = $(sel); if (el) { el.addEventListener('input', sync); el.addEventListener('change', sync); } });
+const submit = async () => {
+  const { need, until, note } = vals();
+  const wantText = !!(ownerPh && $('#bText') && $('#bText').checked), msg = borrowMsg(t, o, need, until, note);
+  $('#dlg').close('x');
+  try { await api(`tools/${toolId}/request`, { method: 'POST', body: { needed_on: need, until_on: until, note } }); } catch (e) { toast(e.message); return; }
   await load();
   openDlg(`<h3>Request sent</h3><p>${esc(name)} will see it at the top of his screen. You'll see his answer at the top of yours, and under <b>My shelf</b>.</p>
 ${wantText && !canText ? copyBlock(ownerPh, name, msg) : ''}
-${wantText && canText ? `<p class="small muted">Your texting app should have opened with a message to ${esc(name)}. If it didn't:</p><a class="textbtn" href="${smsHref(ownerPh.d, msg)}">Text ${esc(name)}</a>` : ''}
+${wantText && canText ? `<p class="small muted">Your texting app should have opened with a message to ${esc(name)}. Just hit send there. If it didn't open:</p><a class="textbtn" href="${smsHref(ownerPh.d, msg)}">Text ${esc(name)}</a>` : ''}
 <div class="actions"><button value="x">Done</button></div>`);
-});
-document.querySelectorAll('#dlg [data-bn]').forEach(b => b.onclick = () => { $('#bNeed').value = b.dataset.bn; });
-document.querySelectorAll('#dlg [data-bu]').forEach(b => b.onclick = () => { $('#bUntil').value = addDays($('#bNeed').value || S.today, +b.dataset.bu); });
+};
+$('#bSendBtn').onclick = submit;
+$('#bSendText').addEventListener('click', () => { setTimeout(submit, 0); }); // let the link open the texting app, then send the request
+document.querySelectorAll('#dlg [data-bn]').forEach(b => b.onclick = () => { $('#bNeed').value = b.dataset.bn; sync(); });
+document.querySelectorAll('#dlg [data-bu]').forEach(b => b.onclick = () => { $('#bUntil').value = addDays($('#bNeed').value || S.today, +b.dataset.bu); sync(); });
+sync();
 }
 
 function shrinkPhoto(file) {
