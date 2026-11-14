@@ -75,7 +75,29 @@ document.querySelectorAll('[data-tool]').forEach(r => r.onclick = () => toolDeta
 
 const firstName = (n) => (n || '').trim().split(/\s+/)[0] || 'there';
 function phoneOf(contact) { const m = (contact || '').match(/\+?\d[\d\s().-]{8,}\d/); if (!m) return null; let d = m[0].replace(/\D/g, ''); if (d.length === 10) d = '1' + d; return { m, d }; }
-const smsHref = (d, body) => `sms:+${d}?&body=${encodeURIComponent(body)}`;
+// Text links: iPhones want "sms:NUMBER&body=", Android wants "sms:NUMBER?body=". Computers can't send texts at all,
+// so there we show the number and message with a Copy button instead of a dead link.
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const canText = isIOS || /Android/i.test(navigator.userAgent);
+const smsHref = (d, body) => `sms:+${d}${isIOS ? '&' : '?'}body=${encodeURIComponent(body)}`;
+const prettyPhone = (d) => d.length === 11 && d[0] === '1' ? `(${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}` : '+' + d;
+function copyBlock(ph, name, body) {
+return `<div class="copytext"><div class="small"><b>Text ${esc(name)} at ${esc(prettyPhone(ph.d))}</b> from your phone. Here's a message you can copy:</div>
+<textarea readonly rows="5">${esc(body)}</textarea><div class="actions" style="justify-content:flex-start"><button type="button" class="sm" data-copy>Copy message</button></div></div>`;
+}
+const TXT = [];
+// A small "Text Dave" button for cards: a real text link on phones, a pop-up with the number and message on computers.
+function textBtn(u, body, label) {
+const ph = phoneOf(u && u.contact); if (!ph) return '';
+if (canText) return `<a class="btn sm" style="text-decoration:none;font-size:13px;padding:5px 9px" href="${smsHref(ph.d, body)}">${esc(label)}</a>`;
+TXT.push({ ph, name: firstName(u.name), body }); return `<button type="button" class="sm" data-txt="${TXT.length - 1}">${esc(label)}</button>`;
+}
+document.addEventListener('click', (e) => {
+const c = e.target.closest && e.target.closest('[data-copy]');
+if (c) { const ta = c.closest('.copytext').querySelector('textarea'); ta.select(); (navigator.clipboard ? navigator.clipboard.writeText(ta.value) : Promise.reject()).then(() => toast('Message copied'), () => { document.execCommand('copy'); toast('Message copied'); }); return; }
+const tb = e.target.closest && e.target.closest('[data-txt]');
+if (tb) { const x = TXT[+tb.dataset.txt]; if (x) openDlg(`<h3>Text ${esc(x.name)}</h3>${copyBlock(x.ph, x.name, x.body)}<div class="actions"><button value="x">Done</button></div>`); }
+});
 
 function contactHtml(o, t) {
 if (!o.contact) return '<span class="muted">No contact info</span>';
@@ -84,8 +106,9 @@ if (!m || t.owner_id === S.me.id) return esc(o.contact);
 let d = m[0].replace(/\D/g, ''); if (d.length === 10) d = '1' + d;
 const me = userById(S.me.id), first = (n) => (n || '').trim().split(/\s+/)[0] || 'there';
 const body = `Hi ${first(o.name)}, this is ${first(me && me.name)}, I'd like to borrow your ${t.name}.`;
-const href = `sms:+${d}?&body=${encodeURIComponent(body)}`;
-return esc(o.contact.slice(0, m.index)) + `<a href="${href}">${esc(m[0])}</a>` + esc(o.contact.slice(m.index + m[0].length)) + '<div class="small muted">Tap the number to text a borrow request</div>';
+if (!canText) return esc(o.contact) + '<div class="small muted">Tap <b>Ask to borrow</b> below to send a request.</div>';
+const href = smsHref(d, body);
+return esc(o.contact.slice(0, m.index)) + `<a href="${href}">${esc(m[0])}</a>` + esc(o.contact.slice(m.index + m[0].length)) + '<div class="small muted">Or tap the number to text him directly</div>';
 }
 
 function toolDetail(id) {
@@ -216,6 +239,7 @@ return `<div class="helpcard ${mine ? 'mine' : ''}" data-help="${h.id}"><div cla
 function textLink(u, body, label) {
 const ph = phoneOf(u && u.contact);
 if (!ph) return u && u.contact ? `<div class="small">Reach ${esc(firstName(u.name))}: ${esc(u.contact)}</div>` : '';
+if (!canText) return copyBlock(ph, firstName(u.name), body);
 return `<a class="textbtn" href="${smsHref(ph.d, body)}">${esc(label)}</a>`;
 }
 
@@ -223,7 +247,7 @@ function helpDetail(id) {
 const h = helpById(id); if (!h) return;
 const u = userById(h.user_id), me = userById(S.me.id), mine = h.user_id === S.me.id, joined = h.helpers.includes(S.me.id);
 const helpersHtml = h.helpers.length ? `<div class="helperlist">${h.helpers.map(hid => { const hu = userById(hid); const ph = mine && hu ? phoneOf(hu.contact) : null;
-  return `<div>${who(hid)}${ph ? ` · <a href="${smsHref(ph.d, `Hi ${firstName(hu.name)}, thanks for offering to help with "${h.title}"!`)}">text ${esc(firstName(hu.name))}</a>` : ''}</div>`; }).join('')}</div>` : '<span class="muted">Nobody yet</span>';
+  return `<div class="row" style="padding:4px 0;border:0">${who(hid)}${ph ? textBtn(hu, `Hi ${firstName(hu.name)}, thanks for offering to help with "${h.title}"!`, `Text ${firstName(hu.name)}`) : ''}</div>`; }).join('')}</div>` : '<span class="muted">Nobody yet</span>';
 const acts = mine ? `<button type="button" class="danger" id="hClose" style="margin-right:auto">Mark done</button><button type="button" id="hEdit">Edit</button><button value="x">Close</button>`
   : joined ? `<button type="button" id="hOut" style="margin-right:auto">Back out</button><button value="x">Close</button>`
   : `<button value="x">Close</button><button type="button" class="primary" id="hOffer">I can help</button>`;
@@ -300,12 +324,12 @@ $('#reqFeed').innerHTML = items.length ? `<div class="helplabel muted">Borrow re
     return `<div class="helpcard req"><div class="helphead">${avatar(u, true)}<div class="grow">
 <div class="small muted">${esc(firstName(u && u.name))} wants to borrow your</div><div class="title">${esc(r.tool_name)}${isNewHelp(r) ? '<span class="pill new">New</span>' : ''}</div>
 <div class="small muted">${reqWhen(r)}</div>${r.note ? `<div class="small reqnote">“${esc(r.note)}”</div>` : ''}</div></div>
-<div class="actions"><button class="sm primary" data-ryes="${r.id}">Yes</button><button class="sm" data-rno="${r.id}">Can't this time</button>${ph ? `<a class="btn sm" style="text-decoration:none;font-size:13px;padding:5px 9px" href="${smsHref(ph.d, `Hi ${firstName(u.name)}, about borrowing my ${r.tool_name}: `)}">Text ${esc(firstName(u.name))}</a>` : ''}</div></div>`;
+<div class="actions"><button class="sm primary" data-ryes="${r.id}">Yes</button><button class="sm" data-rno="${r.id}">Can't this time</button>${ph ? textBtn(u, `Hi ${firstName(u.name)}, about borrowing my ${r.tool_name}: `, `Text ${firstName(u.name)}`) : ''}</div></div>`;
   }
   const o = userById(r.owner_id), ph = phoneOf(o && o.contact), me2 = userById(me);
   return `<div class="helpcard req yes"><div class="helphead">${avatar(o, true)}<div class="grow">
 <div class="small muted">${esc(firstName(o && o.name))} said yes to lending you</div><div class="title">${esc(r.tool_name)}</div><div class="small muted">${reqWhen(r)} · work out pickup with him</div></div></div>
-<div class="actions">${ph ? `<a class="btn sm" style="text-decoration:none;font-size:13px;padding:5px 9px" href="${smsHref(ph.d, `Hi ${firstName(o.name)}, this is ${firstName(me2 && me2.name)}. Thanks for saying yes on the ${r.tool_name}! When's a good time to pick it up?`)}">Text ${esc(firstName(o.name))}</a>` : ''}<button class="sm" data-rcancel="${r.id}">Don't need it</button></div></div>`;
+<div class="actions">${ph ? textBtn(o, `Hi ${firstName(o.name)}, this is ${firstName(me2 && me2.name)}. Thanks for saying yes on the ${r.tool_name}! When's a good time to pick it up?`, `Text ${firstName(o.name)}`) : ''}<button class="sm" data-rcancel="${r.id}">Don't need it</button></div></div>`;
 }).join('')}</div>` : '';
 document.querySelectorAll('#reqFeed [data-ryes]').forEach(b => b.onclick = () => answerReq(+b.dataset.ryes, true));
 document.querySelectorAll('#reqFeed [data-rno]').forEach(b => b.onclick = () => answerReq(+b.dataset.rno, false));
@@ -326,8 +350,17 @@ ${link ? `<p class="small muted">Want to send him a quick text too?</p>${link}` 
 const ln = $('#lendNow'); if (ln) ln.onclick = () => { $('#dlg').close('x'); lendDlg(r.tool_id, false, r); };
 }
 
+function borrowMsg(t, o, need, until, note) {
+const me = userById(S.me.id);
+const on = (d) => (d === S.today || d === addDays(S.today, 1) ? '' : 'on ') + dayText(d);
+const range = until && until !== need;
+const whenPart = need ? ` ${range ? `from ${dayText(need)} through ${dayText(until)}` : on(need)}` : until ? ` and have it back by ${dayText(until)}` : '';
+const why = note ? note.replace(/[.!]+$/, '') : '';
+return `Hi ${firstName(o && o.name)}, this is ${firstName(me && me.name)}. Could I borrow your ${t.name}${whenPart}?${why ? ` It's for ${why[0].toLowerCase() + why.slice(1)}.` : ''} I sent the request on New City Tool Swap too, so you can just tap yes there.`;
+}
+
 function borrowDlg(toolId) {
-const t = S.tools.find(x => x.id === toolId), o = userById(t.owner_id), name = firstName(o && o.name), loan = openLoanFor(toolId);
+const t = S.tools.find(x => x.id === toolId), o = userById(t.owner_id), name = firstName(o && o.name), loan = openLoanFor(toolId), ownerPh = phoneOf(o && o.contact);
 openDlg(`<h3>Ask to borrow: ${esc(t.name)}</h3>
 <p class="small">${esc(name)} will see your request at the top of his screen and can tap yes or no. You'll see his answer here too.${loan ? ` <b>Heads up:</b> it's out with ${esc(loan.borrower_id ? firstName(userById(loan.borrower_id)?.name) : loan.borrower_name)} right now${loan.due_on ? `, due back ${fmt(loan.due_on)}` : ''}.` : ''}</p>
 <div class="field"><span>When do you need it? (optional)</span><input type="date" id="bNeed" min="${S.today}">
@@ -335,15 +368,19 @@ openDlg(`<h3>Ask to borrow: ${esc(t.name)}</h3>
 <div class="field"><span>Bring it back by (optional)</span><input type="date" id="bUntil" min="${S.today}">
 <div class="quick"><button type="button" class="sm" data-bu="0">Same day</button><button type="button" class="sm" data-bu="1">Next day</button><button type="button" class="sm" data-bu="3">3 days</button><button type="button" class="sm" data-bu="7">1 week</button></div></div>
 <label class="field"><span>Note (optional)</span><input id="bNote" maxlength="300" placeholder="What's the project?"></label>
+${ownerPh ? `<label class="chk textme"><input type="checkbox" id="bText" checked> <span>Text ${esc(name)} too${canText ? ' <span class="small muted">(your texting app opens with the message written)</span>' : ''}</span></label>` : `<p class="small muted">${esc(name)} hasn't added a phone number, so he'll only see the request on the site.</p>`}
 <div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">Send request</button></div>`,
 async () => {
-  try { await api(`tools/${toolId}/request`, { method: 'POST', body: { needed_on: $('#bNeed').value || null, until_on: $('#bUntil').value || null, note: $('#bNote').value } }); }
-  catch (e) { toast(e.message); return; }
+  const need = $('#bNeed').value || null, until = $('#bUntil').value || null, note = $('#bNote').value.trim();
+  const wantText = ownerPh && $('#bText').checked, msg = borrowMsg(t, o, need, until, note);
+  const sending = api(`tools/${toolId}/request`, { method: 'POST', body: { needed_on: need, until_on: until, note } });
+  if (wantText && canText) location.href = smsHref(ownerPh.d, msg); // open the texting app right away, while the tap still counts
+  try { await sending; } catch (e) { toast(e.message); return; }
   await load();
-  const me = userById(S.me.id);
-  const link = textLink(o, `Hi ${name}, this is ${firstName(me && me.name)}. I just asked on New City Tool Swap to borrow your ${t.name}.`, `Text ${name}`);
   openDlg(`<h3>Request sent</h3><p>${esc(name)} will see it at the top of his screen. You'll see his answer at the top of yours, and under <b>My shelf</b>.</p>
-${link ? `<p class="small muted">Want to give him a heads-up by text too?</p>${link}` : ''}<div class="actions"><button value="x">Done</button></div>`);
+${wantText && !canText ? copyBlock(ownerPh, name, msg) : ''}
+${wantText && canText ? `<p class="small muted">Your texting app should have opened with a message to ${esc(name)}. If it didn't:</p><a class="textbtn" href="${smsHref(ownerPh.d, msg)}">Text ${esc(name)}</a>` : ''}
+<div class="actions"><button value="x">Done</button></div>`);
 });
 document.querySelectorAll('#dlg [data-bn]').forEach(b => b.onclick = () => { $('#bNeed').value = b.dataset.bn; });
 document.querySelectorAll('#dlg [data-bu]').forEach(b => b.onclick = () => { $('#bUntil').value = addDays($('#bNeed').value || S.today, +b.dataset.bu); });
