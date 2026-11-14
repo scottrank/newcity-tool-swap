@@ -1,0 +1,9 @@
+# Cloudflare Pages config for New City Tool Swap. Applied on every deploy.
+name = "newcitytoolswap"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "newcitytoolswap-db"
+database_id = "b218e8f2-1ad6-4428-b074-15f9baa0b890"

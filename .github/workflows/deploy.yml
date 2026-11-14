@@ -1,0 +1,50 @@
+# Publishes the site to the existing Cloudflare Pages project "newcitytoolswap".
+# Push to main -> live site (newcitytoolswap.pages.dev).
+# Push to any other branch -> a test copy at <branch>.newcitytoolswap.pages.dev.
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for Cloudflare token
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Add a repository secret named CLOUDFLARE_API_TOKEN (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - name: Collect site files
+        run: |
+          mkdir -p dist
+          cp index.html style.css app.js _worker.js dist/
+
+      - name: Create the Pages project if it doesn't exist yet
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 07c44a9c36c6f9425f54d7fe8682c4a3
+          command: pages project create newcitytoolswap --production-branch=main
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: 07c44a9c36c6f9425f54d7fe8682c4a3
+          command: pages deploy --project-name=newcitytoolswap --branch=${{ github.ref_name }} --commit-dirty=true
