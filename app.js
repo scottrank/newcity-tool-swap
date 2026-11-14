@@ -4,7 +4,7 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const devAs = new URLSearchParams(location.search).get('as'); // only honored by a local dev server with DEV_BYPASS=1
-let S = null, tab = 'tools', q = '', availOnly = false, profile = null;
+let S = null, tab = 'tools', q = '', availOnly = false, profile = null, helpAll = false;
 
 async function api(path, opts = {}) {
 const headers = { 'content-type': 'application/json' };
@@ -43,6 +43,7 @@ $('#app').innerHTML = `<p class="center muted">${e.status === 401 ? 'You are not
 
 function render() {
 document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === tab));
+renderHelp();
 ({ tools: renderTools, shelf: renderShelf })[tab]();
 Tour.refresh();
 }
@@ -69,6 +70,10 @@ const qi = $('#q'); qi.oninput = () => { q = qi.value; renderTools(); $('#q').fo
 $('#avail').onchange = (e) => { availOnly = e.target.checked; renderTools(); };
 document.querySelectorAll('[data-tool]').forEach(r => r.onclick = () => toolDetail(+r.dataset.tool));
 }
+
+const firstName = (n) => (n || '').trim().split(/\s+/)[0] || 'there';
+function phoneOf(contact) { const m = (contact || '').match(/\+?\d[\d\s().-]{8,}\d/); if (!m) return null; let d = m[0].replace(/\D/g, ''); if (d.length === 10) d = '1' + d; return { m, d }; }
+const smsHref = (d, body) => `sms:+${d}?&body=${encodeURIComponent(body)}`;
 
 function contactHtml(o, t) {
 if (!o.contact) return '<span class="muted">No contact info</span>';
@@ -168,6 +173,95 @@ openDlg(`<h3>Due date: ${esc(l.tool_name)}</h3><div class="field"><span>Due</spa
 document.querySelectorAll('#dlg [data-q]').forEach(b => b.onclick = () => { const d = +b.dataset.q; $('#due').value = d ? addDays(S.today, d) : ''; });
 }
 
+// ---------- project help ----------
+const helpById = (id) => (S.help || []).find(h => h.id === id);
+const whenText = (h) => !h.needed_on ? 'Any day' : h.needed_on === S.today ? 'Today' : h.needed_on === addDays(S.today, 1) ? 'Tomorrow' : new Date(h.needed_on + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const isNewHelp = (h) => Date.parse(String(h.created_at).replace(' ', 'T') + 'Z') > Date.now() - 2 * 864e5;
+const helperCount = (h) => h.helpers.length ? `${h.helpers.length} ${h.helpers.length === 1 ? 'guy' : 'guys'} helping` : 'Nobody yet';
+
+function renderHelp() {
+$('.helpzone').hidden = false;
+const list = S.help || [];
+const shown = helpAll ? list : list.slice(0, 3);
+$('#helpFeed').innerHTML = list.length ? `<div class="helplabel muted">Guys who need a hand</div><div class="helpfeed">${shown.map(helpCard).join('')}
+${list.length > 3 ? `<button type="button" class="helpmore sm" id="helpMore">${helpAll ? 'Show fewer' : `Show all ${list.length} requests`}</button>` : ''}</div>` : '';
+document.querySelectorAll('#helpFeed [data-help]').forEach(c => c.onclick = (e) => { if (!e.target.closest('button')) helpDetail(+c.dataset.help); });
+document.querySelectorAll('#helpFeed [data-hoffer]').forEach(b => b.onclick = () => offerHelp(+b.dataset.hoffer));
+document.querySelectorAll('#helpFeed [data-hview]').forEach(b => b.onclick = () => helpDetail(+b.dataset.hview));
+document.querySelectorAll('#helpFeed [data-hclose]').forEach(b => b.onclick = () => closeHelp(+b.dataset.hclose));
+const more = $('#helpMore'); if (more) more.onclick = () => { helpAll = !helpAll; renderHelp(); };
+}
+
+function helpCard(h) {
+const u = userById(h.user_id), mine = h.user_id === S.me.id, joined = h.helpers.includes(S.me.id);
+const lead = mine ? 'You asked' : `${esc(firstName(u && u.name))} needs a hand`;
+const btns = mine ? `<button class="sm" data-hview="${h.id}">See who's helping</button><button class="sm" data-hclose="${h.id}">Mark done</button>`
+  : joined ? `<span class="pill ok">You're in ✓</span><button class="sm" data-hview="${h.id}">Details</button>`
+  : `<button class="sm primary" data-hoffer="${h.id}">I can help</button><button class="sm" data-hview="${h.id}">Details</button>`;
+return `<div class="helpcard ${mine ? 'mine' : ''}" data-help="${h.id}"><div class="helphead">${avatar(u, true)}<div class="grow">
+<div class="small muted">${lead}${isNewHelp(h) ? '<span class="pill new">New</span>' : ''}</div><div class="title">${esc(h.title)}</div>
+<div class="small muted">${whenText(h)} · ${helperCount(h)}</div></div></div><div class="actions">${btns}</div></div>`;
+}
+
+function textLink(u, body, label) {
+const ph = phoneOf(u && u.contact);
+if (!ph) return u && u.contact ? `<div class="small">Reach ${esc(firstName(u.name))}: ${esc(u.contact)}</div>` : '';
+return `<a class="textbtn" href="${smsHref(ph.d, body)}">${esc(label)}</a>`;
+}
+
+function helpDetail(id) {
+const h = helpById(id); if (!h) return;
+const u = userById(h.user_id), me = userById(S.me.id), mine = h.user_id === S.me.id, joined = h.helpers.includes(S.me.id);
+const helpersHtml = h.helpers.length ? `<div class="helperlist">${h.helpers.map(hid => { const hu = userById(hid); const ph = mine && hu ? phoneOf(hu.contact) : null;
+  return `<div>${who(hid)}${ph ? ` · <a href="${smsHref(ph.d, `Hi ${firstName(hu.name)}, thanks for offering to help with "${h.title}"!`)}">text ${esc(firstName(hu.name))}</a>` : ''}</div>`; }).join('')}</div>` : '<span class="muted">Nobody yet</span>';
+const acts = mine ? `<button type="button" class="danger" id="hClose" style="margin-right:auto">Mark done</button><button value="x">Close</button>`
+  : joined ? `<button type="button" id="hOut" style="margin-right:auto">Back out</button><button value="x">Close</button>`
+  : `<button value="x">Close</button><button type="button" class="primary" id="hOffer">I can help</button>`;
+openDlg(`<h3>${esc(h.title)}</h3>
+<div class="field"><span>Who's asking</span><div>${who(h.user_id)}${u && u.street ? `<div class="small muted">${esc(u.street)}</div>` : ''}</div></div>
+<div class="field"><span>When</span><div>${whenText(h)}</div></div>
+${h.details ? `<div class="field"><span>Details</span><div style="white-space:pre-wrap">${esc(h.details)}</div></div>` : ''}
+<div class="field"><span>Who's helping</span>${helpersHtml}</div>
+${!mine && joined ? textLink(u, `Hi ${firstName(u && u.name)}, this is ${firstName(me && me.name)}. I can help with "${h.title}".`, `Text ${firstName(u && u.name)}`) : ''}
+<div class="actions">${acts}</div>`);
+const o = $('#hOffer'); if (o) o.onclick = () => { $('#dlg').close('x'); offerHelp(id); };
+const out = $('#hOut'); if (out) out.onclick = () => { $('#dlg').close('x'); act(() => api(`help/${id}/offer`, { method: 'DELETE' }), "You're off this one"); };
+const cl = $('#hClose'); if (cl) cl.onclick = () => { $('#dlg').close('x'); closeHelp(id); };
+}
+
+async function offerHelp(id) {
+const h = helpById(id); if (!h) return;
+try { await api(`help/${id}/offer`, { method: 'POST', body: {} }); } catch (e) { toast(e.message); return load(); }
+await load();
+const u = userById(h.user_id), me = userById(S.me.id), name = firstName(u && u.name);
+const link = textLink(u, `Hi ${name}, this is ${firstName(me && me.name)}. I saw your request on New City Tool Swap and I can help with "${h.title}".`, `Text ${name}`);
+openDlg(`<h3>Thanks for pitching in!</h3>
+<p>You're on the list for <b>${esc(h.title)}</b>. ${name} can see you offered.</p>
+${link ? `<p class="small muted">Let ${esc(name)} know you're coming and work out the details:</p>${link}` : `<p class="small muted">${esc(name)} hasn't added contact info, so keep an eye on the request for details.</p>`}
+<div class="actions"><button value="x">Done</button></div>`);
+}
+
+function closeHelp(id) {
+const h = helpById(id); if (!h) return;
+if (confirm(`Mark "${h.title}" as done? It comes off the list for everyone.`)) act(() => api(`help/${id}/close`, { method: 'POST', body: {} }), 'Marked done. Nice work!');
+}
+
+function nextSaturday() { const d = new Date(S.today + 'T12:00:00Z'); const add = (6 - d.getUTCDay() + 7) % 7; return addDays(S.today, add); }
+
+function askHelpDlg() {
+if (!S) return;
+openDlg(`<h3>Ask for a hand</h3>
+<p class="small">This is where you ask the guys for help with a project: hauling gravel, moving a couch, building a fence, splitting firewood, tearing out a deck. Your request shows up at the top of the site for everyone, and anyone can offer to help with one tap.</p>
+<label class="field"><span>What do you need help with?</span><input id="hTitle" required maxlength="100" placeholder="Haul a load of gravel to my backyard"></label>
+<label class="field"><span>Details (optional)</span><textarea id="hDetails" rows="3" maxlength="600" placeholder="Start time, how long it should take, how many guys, whether to bring a truck or tools…"></textarea></label>
+<div class="field"><span>When (optional)</span><input type="date" id="hDate" min="${S.today}">
+<div class="quick"><button type="button" class="sm" data-hd="${S.today}">Today</button><button type="button" class="sm" data-hd="${addDays(S.today, 1)}">Tomorrow</button><button type="button" class="sm" data-hd="${nextSaturday()}">This Saturday</button><button type="button" class="sm" data-hd="">Any day</button></div></div>
+<div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">Post request</button></div>`,
+() => act(() => api('help', { method: 'POST', body: { title: $('#hTitle').value, details: $('#hDetails').value, needed_on: $('#hDate').value || null } }), 'Request posted. The guys will see it up top.'));
+document.querySelectorAll('#dlg [data-hd]').forEach(b => b.onclick = () => { $('#hDate').value = b.dataset.hd; });
+}
+$('#askHelp').onclick = askHelpDlg;
+
 function shrinkPhoto(file) {
 return new Promise((res, rej) => {
 const url = URL.createObjectURL(file), img = new Image();
@@ -245,7 +339,9 @@ function markTourSeen() { try { localStorage.setItem(tourKey(), '1'); } catch {}
 const Tour = (() => {
   const steps = [
     { tab: null, title: 'Welcome to New City Tool Swap',
-      body: "Borrow tools from the guys and lend out your own. This quick tour shows you around. It takes about a minute." },
+      body: "Borrow tools from the guys, lend out your own, and ask for a hand with projects. This quick tour shows you around. It takes about a minute." },
+    { tab: null, target: '#askHelp', title: 'Need a hand?',
+      body: "Tap this button to ask the guys for help with a project, like hauling gravel or moving furniture. Open requests show up right below it, and anyone can tap <b>I can help</b>." },
     { tab: 'tools', target: 'nav a[data-tab="tools"]', title: 'All tools',
       body: "Everyone's tools live here. Tap any tool to see its notes and photo, who owns it, and who has it right now." },
     { tab: 'tools', target: '.bar', title: 'Find what you need',

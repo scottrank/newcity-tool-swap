@@ -213,14 +213,47 @@ async function handleApi(request, env, url) {
     fail(404, 'Not found');
   }
 
+  if (a === 'help') {
+    if (!b) {
+      if (method !== 'POST') fail(404, 'Not found');
+      const x = await body(request);
+      const neededOn = x.needed_on || null;
+      if (neededOn !== null && (!validDate(neededOn) || neededOn < t)) fail(400, "Pick a date that isn't in the past");
+      const r = await db.prepare('INSERT INTO help_requests (user_id, title, details, needed_on) VALUES (?, ?, ?, ?)')
+        .bind(me.id, str(x.title, 100, 'What you need help with', true), str(x.details, 600, 'Details'), neededOn).run();
+      return json({ ok: true, id: r.meta.last_row_id });
+    }
+    const req = /^\d+$/.test(b) ? await db.prepare('SELECT * FROM help_requests WHERE id = ? AND closed_at IS NULL').bind(+b).first() : null;
+    if (!req) fail(404, 'That request is closed or gone');
+    const mine = req.user_id === me.id;
+    if (c === 'offer' && method === 'POST') {
+      if (mine) fail(400, "That's your own request");
+      await db.prepare('INSERT OR IGNORE INTO help_offers (request_id, user_id) VALUES (?, ?)').bind(req.id, me.id).run();
+      return json({ ok: true });
+    }
+    if (c === 'offer' && method === 'DELETE') {
+      await db.prepare('DELETE FROM help_offers WHERE request_id = ? AND user_id = ?').bind(req.id, me.id).run();
+      return json({ ok: true });
+    }
+    if (c === 'close' && method === 'POST') {
+      if (!mine) fail(403, 'Only the person who asked can close this');
+      await db.prepare("UPDATE help_requests SET closed_at = datetime('now') WHERE id = ?").bind(req.id).run();
+      return json({ ok: true });
+    }
+    fail(404, 'Not found');
+  }
+
   fail(404, 'Not found');
 }
 
 async function state(db, me, t) {
-  const [usersR, toolsR, loansR] = await db.batch([
+  // Open help requests: those with a date stay up through that day; undated ones for 30 days.
+  const [usersR, toolsR, loansR, helpR, offersR] = await db.batch([
     db.prepare(`SELECT ${USER_COLS} FROM users ORDER BY name COLLATE NOCASE`),
     db.prepare("SELECT id, owner_id, name, notes, private, removed_at, photo IS NOT NULL AS has_photo, CASE WHEN photo IS NULL THEN '' ELSE length(photo) || '-' || substr(photo, -10) END AS photo_v FROM tools ORDER BY name COLLATE NOCASE"),
-    db.prepare('SELECT * FROM loans WHERE removed_at IS NULL ORDER BY lent_on DESC, id DESC')
+    db.prepare('SELECT * FROM loans WHERE removed_at IS NULL ORDER BY lent_on DESC, id DESC'),
+    db.prepare("SELECT id, user_id, title, details, needed_on, created_at FROM help_requests WHERE closed_at IS NULL AND (needed_on >= ? OR (needed_on IS NULL AND created_at >= datetime('now', '-30 days'))) ORDER BY id DESC").bind(t),
+    db.prepare('SELECT o.request_id, o.user_id FROM help_offers o JOIN help_requests r ON r.id = o.request_id WHERE r.closed_at IS NULL ORDER BY o.created_at')
   ]);
   const users = usersR.results.map(u => ({ ...u, removed: !!u.removed })), allTools = toolsR.results, allLoans = loansR.results;
   const removedIds = new Set(users.filter(u => u.removed).map(u => u.id));
@@ -239,5 +272,9 @@ async function state(db, me, t) {
   }
 
 
-  return { me: { id: me.id }, today: t, users, tools, loans };
+  const helpers = new Map();
+  for (const o of offersR.results) { if (removedIds.has(o.user_id)) continue; if (!helpers.has(o.request_id)) helpers.set(o.request_id, []); helpers.get(o.request_id).push(o.user_id); }
+  const help = helpR.results.filter(h => !removedIds.has(h.user_id)).map(h => ({ ...h, helpers: helpers.get(h.id) || [] }));
+
+  return { me: { id: me.id }, today: t, users, tools, loans, help };
 }
