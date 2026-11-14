@@ -7,3 +7,9 @@ compatibility_date = "2026-10-01"
 binding = "DB"
 database_name = "newcitytoolswap-db"
 database_id = "b218e8f2-1ad6-4428-b074-15f9baa0b890"
+
+# Cloudflare Access sign-in. Neither value is secret: the team domain is public
+# and the AUD tag only identifies which Access application a sign-in is for.
+[vars]
+TEAM_DOMAIN = "jolly-flower-b19b.cloudflareaccess.com"
+POLICY_AUD = "5ab90edc915c8fc97446a18a4cfd4e9ebc387ef7c29af3690f83ee898fd00754"

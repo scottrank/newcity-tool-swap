@@ -7,7 +7,7 @@ Tool-lending site for the New City men's group, on Cloudflare Pages. A copy of M
 - `wrangler.toml`: Pages config, including the D1 binding `DB` → `newcitytoolswap-db`.
 - `schema.sql`: the database layout (already applied to `newcitytoolswap-db`).
 
-Needs the Pages secrets `POLICY_AUD` and `TEAM_DOMAIN` (Cloudflare Access).
+Sign-in is Cloudflare Access; `TEAM_DOMAIN` and `POLICY_AUD` are set in `wrangler.toml`. The Access policy allows Everyone with a one-time email code, so anyone can sign up.
 
 ## Publishing
 
