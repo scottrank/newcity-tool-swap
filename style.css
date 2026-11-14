@@ -3,9 +3,10 @@
 *{box-sizing:border-box}
 body{margin:0;font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--fg)}
 .top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--line)}
-.top{flex-wrap:wrap}
+.top{flex-wrap:wrap;position:relative}
+.logo{position:absolute;top:8px;right:14px;height:44px;width:auto;border-radius:8px;display:block}
 .brand{flex-basis:100%;order:-1;text-align:center;font-family:"Rye",Georgia,serif;font-weight:400;font-size:30px;letter-spacing:1px;line-height:1.2;padding:2px 0 4px}
-@media (max-width:480px){.brand{font-size:24px}}
+@media (max-width:480px){.brand{font-size:22px;text-align:left;padding-right:92px}.logo{height:36px;top:8px;right:10px}}
 nav{display:flex;gap:4px;flex:1}
 nav a{padding:8px 12px;border-radius:8px;color:var(--muted);text-decoration:none;font-weight:600;white-space:nowrap}
 nav a.on{background:var(--chip);color:var(--fg)}

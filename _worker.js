@@ -235,6 +235,15 @@ async function handleApi(request, env, url) {
       await db.prepare('DELETE FROM help_offers WHERE request_id = ? AND user_id = ?').bind(req.id, me.id).run();
       return json({ ok: true });
     }
+    if (!c && method === 'PATCH') {
+      if (!mine) fail(403, 'Only the person who asked can edit this');
+      const x = await body(request);
+      const neededOn = x.needed_on || null;
+      if (neededOn !== null && (!validDate(neededOn) || (neededOn < t && neededOn !== req.needed_on))) fail(400, "Pick a date that isn't in the past");
+      await db.prepare('UPDATE help_requests SET title = ?, details = ?, needed_on = ? WHERE id = ?')
+        .bind(str(x.title, 100, 'What you need help with', true), str(x.details, 600, 'Details'), neededOn, req.id).run();
+      return json({ ok: true });
+    }
     if (c === 'close' && method === 'POST') {
       if (!mine) fail(403, 'Only the person who asked can close this');
       await db.prepare("UPDATE help_requests SET closed_at = datetime('now') WHERE id = ?").bind(req.id).run();

@@ -188,6 +188,7 @@ ${list.length > 3 ? `<button type="button" class="helpmore sm" id="helpMore">${h
 document.querySelectorAll('#helpFeed [data-help]').forEach(c => c.onclick = (e) => { if (!e.target.closest('button')) helpDetail(+c.dataset.help); });
 document.querySelectorAll('#helpFeed [data-hoffer]').forEach(b => b.onclick = () => offerHelp(+b.dataset.hoffer));
 document.querySelectorAll('#helpFeed [data-hview]').forEach(b => b.onclick = () => helpDetail(+b.dataset.hview));
+document.querySelectorAll('#helpFeed [data-hedit]').forEach(b => b.onclick = () => askHelpDlg(helpById(+b.dataset.hedit)));
 document.querySelectorAll('#helpFeed [data-hclose]').forEach(b => b.onclick = () => closeHelp(+b.dataset.hclose));
 const more = $('#helpMore'); if (more) more.onclick = () => { helpAll = !helpAll; renderHelp(); };
 }
@@ -195,7 +196,7 @@ const more = $('#helpMore'); if (more) more.onclick = () => { helpAll = !helpAll
 function helpCard(h) {
 const u = userById(h.user_id), mine = h.user_id === S.me.id, joined = h.helpers.includes(S.me.id);
 const lead = mine ? 'You asked' : `${esc(firstName(u && u.name))} needs a hand`;
-const btns = mine ? `<button class="sm" data-hview="${h.id}">See who's helping</button><button class="sm" data-hclose="${h.id}">Mark done</button>`
+const btns = mine ? `<button class="sm" data-hview="${h.id}">See who's helping</button><button class="sm" data-hedit="${h.id}">Edit</button><button class="sm" data-hclose="${h.id}">Mark done</button>`
   : joined ? `<span class="pill ok">You're in ✓</span><button class="sm" data-hview="${h.id}">Details</button>`
   : `<button class="sm primary" data-hoffer="${h.id}">I can help</button><button class="sm" data-hview="${h.id}">Details</button>`;
 return `<div class="helpcard ${mine ? 'mine' : ''}" data-help="${h.id}"><div class="helphead">${avatar(u, true)}<div class="grow">
@@ -214,7 +215,7 @@ const h = helpById(id); if (!h) return;
 const u = userById(h.user_id), me = userById(S.me.id), mine = h.user_id === S.me.id, joined = h.helpers.includes(S.me.id);
 const helpersHtml = h.helpers.length ? `<div class="helperlist">${h.helpers.map(hid => { const hu = userById(hid); const ph = mine && hu ? phoneOf(hu.contact) : null;
   return `<div>${who(hid)}${ph ? ` · <a href="${smsHref(ph.d, `Hi ${firstName(hu.name)}, thanks for offering to help with "${h.title}"!`)}">text ${esc(firstName(hu.name))}</a>` : ''}</div>`; }).join('')}</div>` : '<span class="muted">Nobody yet</span>';
-const acts = mine ? `<button type="button" class="danger" id="hClose" style="margin-right:auto">Mark done</button><button value="x">Close</button>`
+const acts = mine ? `<button type="button" class="danger" id="hClose" style="margin-right:auto">Mark done</button><button type="button" id="hEdit">Edit</button><button value="x">Close</button>`
   : joined ? `<button type="button" id="hOut" style="margin-right:auto">Back out</button><button value="x">Close</button>`
   : `<button value="x">Close</button><button type="button" class="primary" id="hOffer">I can help</button>`;
 openDlg(`<h3>${esc(h.title)}</h3>
@@ -226,6 +227,7 @@ ${!mine && joined ? textLink(u, `Hi ${firstName(u && u.name)}, this is ${firstNa
 <div class="actions">${acts}</div>`);
 const o = $('#hOffer'); if (o) o.onclick = () => { $('#dlg').close('x'); offerHelp(id); };
 const out = $('#hOut'); if (out) out.onclick = () => { $('#dlg').close('x'); act(() => api(`help/${id}/offer`, { method: 'DELETE' }), "You're off this one"); };
+const ed = $('#hEdit'); if (ed) ed.onclick = () => askHelpDlg(h);
 const cl = $('#hClose'); if (cl) cl.onclick = () => { $('#dlg').close('x'); closeHelp(id); };
 }
 
@@ -248,19 +250,20 @@ if (confirm(`Mark "${h.title}" as done? It comes off the list for everyone.`)) a
 
 function nextSaturday() { const d = new Date(S.today + 'T12:00:00Z'); const add = (6 - d.getUTCDay() + 7) % 7; return addDays(S.today, add); }
 
-function askHelpDlg() {
+function askHelpDlg(edit) {
 if (!S) return;
-openDlg(`<h3>Ask for a hand</h3>
-<p class="small">This is where you ask the guys for help with a project: hauling gravel, moving a couch, building a fence, splitting firewood, tearing out a deck. Your request shows up at the top of the site for everyone, and anyone can offer to help with one tap.</p>
-<label class="field"><span>What do you need help with?</span><input id="hTitle" required maxlength="100" placeholder="Haul a load of gravel to my backyard"></label>
-<label class="field"><span>Details (optional)</span><textarea id="hDetails" rows="3" maxlength="600" placeholder="Start time, how long it should take, how many guys, whether to bring a truck or tools…"></textarea></label>
-<div class="field"><span>When (optional)</span><input type="date" id="hDate" min="${S.today}">
+const e = edit && edit.id ? edit : null;
+openDlg(`<h3>${e ? 'Edit your request' : 'Ask for a hand'}</h3>
+${e ? '<p class="small muted">Changes show up for everyone right away. Anyone who already offered stays on the list.</p>' : `<p class="small">This is where you ask the guys for help with a project: hauling gravel, moving a couch, building a fence, splitting firewood, tearing out a deck. Your request shows up at the top of the site for everyone, and anyone can offer to help with one tap.</p>`}
+<label class="field"><span>What do you need help with?</span><input id="hTitle" required maxlength="100" placeholder="Haul a load of gravel to my backyard" value="${esc(e ? e.title : '')}"></label>
+<label class="field"><span>Details (optional)</span><textarea id="hDetails" rows="3" maxlength="600" placeholder="Start time, how long it should take, how many guys, whether to bring a truck or tools…">${esc(e ? e.details : '')}</textarea></label>
+<div class="field"><span>When (optional)</span><input type="date" id="hDate" min="${S.today}" value="${esc(e && e.needed_on || '')}">
 <div class="quick"><button type="button" class="sm" data-hd="${S.today}">Today</button><button type="button" class="sm" data-hd="${addDays(S.today, 1)}">Tomorrow</button><button type="button" class="sm" data-hd="${nextSaturday()}">This Saturday</button><button type="button" class="sm" data-hd="">Any day</button></div></div>
-<div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">Post request</button></div>`,
-() => act(() => api('help', { method: 'POST', body: { title: $('#hTitle').value, details: $('#hDetails').value, needed_on: $('#hDate').value || null } }), 'Request posted. The guys will see it up top.'));
+<div class="actions"><button value="x" formnovalidate>Cancel</button><button class="primary" value="ok">${e ? 'Save changes' : 'Post request'}</button></div>`,
+() => act(() => api(e ? 'help/' + e.id : 'help', { method: e ? 'PATCH' : 'POST', body: { title: $('#hTitle').value, details: $('#hDetails').value, needed_on: $('#hDate').value || null } }), e ? 'Request updated' : 'Request posted. The guys will see it up top.'));
 document.querySelectorAll('#dlg [data-hd]').forEach(b => b.onclick = () => { $('#hDate').value = b.dataset.hd; });
 }
-$('#askHelp').onclick = askHelpDlg;
+$('#askHelp').onclick = () => askHelpDlg();
 
 function shrinkPhoto(file) {
 return new Promise((res, rej) => {
