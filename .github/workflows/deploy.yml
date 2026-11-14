@@ -28,6 +28,10 @@ jobs:
             echo "::error::Add a repository secret named CLOUDFLARE_API_TOKEN (Settings > Secrets and variables > Actions)."
             exit 1
           fi
+          # Strip stray spaces or line breaks picked up when pasting the token.
+          CLEAN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+          echo "::add-mask::$CLEAN"
+          echo "CF_TOKEN=$CLEAN" >> "$GITHUB_ENV"
 
       - name: Collect site files
         run: |
@@ -38,13 +42,15 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         continue-on-error: true
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ env.CF_TOKEN }}
+          wranglerVersion: "4"
           accountId: 07c44a9c36c6f9425f54d7fe8682c4a3
           command: pages project create newcitytoolswap --production-branch=main
 
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          apiToken: ${{ env.CF_TOKEN }}
+          wranglerVersion: "4"
           accountId: 07c44a9c36c6f9425f54d7fe8682c4a3
           command: pages deploy --project-name=newcitytoolswap --branch=${{ github.ref_name }} --commit-dirty=true
