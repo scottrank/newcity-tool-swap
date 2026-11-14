@@ -30,11 +30,10 @@ jobs:
           fi
           # Strip stray spaces or line breaks picked up when pasting the token.
           CLEAN=$(printf '%s' "$TOKEN" | tr -d '[:space:]')
+          # If the whole test command was pasted, keep only the token after "Bearer".
+          case "$CLEAN" in *Bearer*) CLEAN=$(printf '%s' "${CLEAN##*Bearer}" | grep -oE '^[A-Za-z0-9_-]+' || true);; esac
           echo "::add-mask::$CLEAN"
-          # Describe the token without revealing it, to help diagnose paste mistakes.
-          echo "Token length: ${#CLEAN}"
-          echo "Characters other than letters, digits, - and _: $(printf '%s' "$CLEAN" | tr -d 'A-Za-z0-9_-' | wc -c)"
-          case "$CLEAN" in *Bearer*|*curl*|*Authorization*) echo "::warning::The secret looks like it contains the test command, not just the token.";; esac
+          if [ -z "$CLEAN" ]; then echo "::error::CLOUDFLARE_API_TOKEN doesn't contain a token."; exit 1; fi
           echo "CF_TOKEN=$CLEAN" >> "$GITHUB_ENV"
 
       - name: Collect site files
